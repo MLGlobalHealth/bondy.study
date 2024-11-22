@@ -1,0 +1,1194 @@
+---
+title: "Bone Health in Youth Living with Perinatally Acquired HIV-1 infection"
+author: "Alexandra Blenkinsop"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(knitr)
+library(kableExtra)
+require(here)
+require(data.table)
+require(ggplot2)
+require(ggsci)
+require(Hmisc)
+require(dplyr)
+require(rstan)
+library(lubridate)
+
+gitdir <- here()
+source(file.path(gitdir, "config.R"))
+source(file.path(gitdir, "scripts","functions.R"))
+args <- list(
+  analysis = '241010_abnormal_minus2',
+  save_figs = T
+)
+
+```
+
+# Objectives
+* Characterise bone health among YPHIV when compared with an age/ethnicity matched population
+* To evaluate traditional and non-traditional markers of bone health and determine BMD using DXA at baseline and after 24 months
+* Compare changes in bone health by age group and ART regimen including a cohort switching from TDF to TAF
+
+# Baseline visit
+
+There were 130 participants at baseline. Their characteristics are described in the table below.
+
+63% had prior exposure to TDF.
+
+## Table of baseline characteristics
+```{r T, warning=FALSE, message=FALSE, echo=F}
+
+tab <- readRDS(file=file.path(indir.data,'results',args$analysis,gsub('.csv','.RDS',table.characteristics)))
+
+kable(tab, "html", escape = F, align = "rrrrr") %>%
+  kable_styling(full_width = T, position = "center")
+
+```
+
+## Baseline BMD {.tabset}
+
+### DEXA-VFA in LS
+```{r , warning=FALSE, message=FALSE, echo=F}
+
+db <- readRDS(file=file.path(indir.data,file.path.bl.data.clean))
+dt <- readRDS(file=file.path(indir.data,file.path.results.data.clean))
+
+dt <- merge(dt,subset(db,select=c('study_id','ethnicity','BMI','fam_hx_bone_disease',
+                                  'smoking','alcohol_units','phys_activity','BMD_z')),
+            by='study_id',all.x=T)
+
+dt <- clean_data(dt)
+
+
+sum_stat <- dt[visit=='baseline', list(
+                  age_group = 'Overall',
+                  mean = mean(BMD),
+                  sd = sd(BMD))
+                ]
+sum_stat[, `Mean (sd)`:= paste0(round(mean,2),' (',round(sd,2),')')]
+
+sum_stat_age <- dt[visit=='baseline', list(
+                  mean = mean(BMD),
+                  sd = sd(BMD)),by='age_group'
+                ]
+sum_stat_age[, `Mean (sd)`:= paste0(round(mean,2),' (',round(sd,2),')')]
+
+sum_stat <- rbind(sum_stat,sum_stat_age)
+set(sum_stat,NULL,c('mean','sd'),NULL)
+
+kable(sum_stat, "html", escape = F, align = "rr") %>%
+  kable_styling(full_width = T, position = "center")
+
+ggplot(subset(dt, visit=='baseline'), aes(x = age_group, y = BMD)) +
+  geom_jitter(width = 0.2, size = 2, color = "darkblue", alpha = 0.6) +
+  stat_summary(fun.data = function(y) {
+    data.frame(ymin = quantile(y, 0.25), ymax = quantile(y, 0.75), y = median(y))
+  }, geom = "errorbar", width = 0.15, color = "forestgreen", size = 0.9) +
+  stat_summary(fun.data = function(y) {
+    data.frame(ymin = quantile(y, 0.5), ymax = quantile(y, 0.5), y = median(y))
+  }, geom = "errorbar", width = 0.3, color = "orange", size = 0.9) +
+  #stat_summary(fun = median, geom = "point", size = 5, color = "orange", shape = 3) +
+  labs(
+    #title = "LS BMD at baseline",
+    x = "Age group (years)",
+    y = "LS BMD at baseline (g/cm2)"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 15),
+    axis.text.x = element_text(size = 12),
+    axis.title = element_text(size = 13)
+  )
+if(args$save_figs==T) ggsave(file=file.path(indir.data,'results',args$analysis,'plot_LS_BMD_bl.pdf'),h=4,w=5,bg="white")
+
+
+```
+
+### Age/ethnicity matched BMD Z-scores
+
+Summary of BMD (LS and hip) when compared to aged/ethnicity matched data.
+
+Participants have negative standardised Z-scores on average (lower BMD than age/sex/ethnicity matched controls).
+
+```{r , warning=FALSE, message=FALSE, echo=F}
+
+sum_stat <- dt[visit=='baseline', list(
+                  age_group = 'Overall',
+                  mean_LS = mean(BMD_LS_Z),
+                  sd_LS = sd(BMD_LS_Z),
+                  mean_hip = mean(hip_Z,na.rm=T),
+                  sd_hip = sd(hip_Z,na.rm=T))
+                ]
+sum_stat[, `Mean (sd) LS`:= paste0(round(mean_LS,2),' (',round(sd_LS,2),')')]
+sum_stat[, `Mean (sd) hip`:= paste0(round(mean_hip,2),' (',round(sd_hip,2),')')]
+
+sum_stat_age <- dt[visit=='baseline', list(
+                  mean_LS = mean(BMD_LS_Z),
+                  sd_LS = sd(BMD_LS_Z),
+                  mean_hip = mean(hip_Z,na.rm=T),
+                  sd_hip = sd(hip_Z,na.rm=T)),by='age_group'
+                ]
+sum_stat_age[, `Mean (sd) LS`:= paste0(round(mean_LS,2),' (',round(sd_LS,2),')')]
+sum_stat_age[, `Mean (sd) hip`:= paste0(round(mean_hip,2),' (',round(sd_hip,2),')')]
+
+sum_stat <- rbind(sum_stat,sum_stat_age)
+set(sum_stat,NULL,c('mean_LS','sd_LS','mean_hip','sd_hip'),NULL)
+
+kable(sum_stat, "html", escape = F, align = "rr") %>%
+  kable_styling(full_width = T, position = "center")
+
+tmp <- subset(subset(dt, visit=='baseline'),select=c('study_id','age_group','BMD_LS_Z','hip_Z'))
+tmp <- melt(tmp,id.vars=c('study_id','age_group'))
+tmp[, variable:= factor(variable,levels=c('BMD_LS_Z','hip_Z'),labels=c('Lumbar spine','Hip'))]
+tmp[, gp:= 'Overall']
+
+ggplot(subset(tmp), aes(x = gp, y = value)) +
+  geom_jitter(width = 0.2, size = 2, color = "darkblue", alpha = 0.6) +
+  stat_summary(fun.data = function(y) {
+    data.frame(ymin = quantile(y, 0.25), ymax = quantile(y, 0.75), y = median(y))
+  }, geom = "errorbar", width = 0.2, color = "forestgreen", size = 0.9) +
+  stat_summary(fun.data = function(y) {
+    data.frame(ymin = quantile(y, 0.5), ymax = quantile(y, 0.5), y = median(y))
+  }, geom = "errorbar", width = 0.3, color = "orange", size = 0.9) +
+  #stat_summary(fun = median, geom = "point", size = 5, color = "orange", shape = 3) +
+  labs(
+    #title = "LS BMD at baseline",
+    x = "",
+    #y = "Age-ethnicity adjusted\nLS BMD z-score at baseline"
+    y = "BMD z-score at baseline"
+  ) +
+  facet_grid(.~variable) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 15),
+    axis.text.x = element_text(size = 12),
+    axis.title = element_text(size = 13)
+  )
+if(args$save_figs==T) ggsave(file=file.path(indir.data,'results',args$analysis,'plot_LS_hip_BMD_zscore_bl.pdf'),h=4,w=4,bg="white")
+
+ggplot(subset(tmp), aes(x = age_group, y = value)) +
+  geom_jitter(width = 0.2, size = 2, color = "darkblue", alpha = 0.6) +
+  stat_summary(fun.data = function(y) {
+    data.frame(ymin = quantile(y, 0.25), ymax = quantile(y, 0.75), y = median(y))
+  }, geom = "errorbar", width = 0.2, color = "forestgreen", size = 0.9) +
+  stat_summary(fun.data = function(y) {
+    data.frame(ymin = quantile(y, 0.5), ymax = quantile(y, 0.5), y = median(y))
+  }, geom = "errorbar", width = 0.3, color = "orange", size = 0.9) +
+  #stat_summary(fun = median, geom = "point", size = 5, color = "orange", shape = 3) +
+  labs(
+    #title = "LS BMD at baseline",
+    x = "Age group (years)",
+    #y = "Age-ethnicity adjusted\nLS BMD z-score at baseline"
+    y = "BMD z-score at baseline"
+  ) +
+  facet_grid(.~variable) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 15),
+    axis.text.x = element_text(size = 12),
+    axis.title = element_text(size = 13)
+  )
+if(args$save_figs==T) ggsave(file=file.path(indir.data,'results',args$analysis,'plot_LS_hip_BMD_zscore_bl_agegp.pdf'),h=4,w=5,bg="white")
+
+
+```
+
+## Low BMD  {.tabset}
+
+### Empirical analysis  {.tabset}
+
+#### Abnormal BMD: Zscore < -1  {.tabset}
+
+##### Variables associated with abnormal BMD at baseline
+
+We tabulate the putative risk factors against abnormal BMD, defined as,
+
+$$Y = 
+\begin{cases}
+1 \;\text{if} \;
+ \text{Z}_{LS} \;\le\; -1\; \bigcup\; \text{Z}_{hip}\; \le\; -1\\
+0 \;\text{otherwise}
+\end{cases}
+$$
+
+```{r , warning=FALSE, message=FALSE, echo=F, fig.height=6}
+
+tmp <- readRDS(file=file.path(indir.data,'results','241010_abnormal_minus1',gsub('.csv','.RDS',table.predictors.bmd)))
+
+kable(tmp, "html", escape = F, align = "rrrrr") %>%
+  kable_styling(full_width = T, position = "center")
+
+
+```
+
+##### Plots of putative risk factors for low BMD
+
+We can also plot the proportions of participants with low BMD (zscore<$-1$) with Agresti-Coull confidence intervals.
+
+From the empirical plots, it looks as though participants with 
+
+* older age groups
+* prior CDC C diagnosis
+* TDF exposure
+* a family history of bone disease 
+* reduced mobilisation 
+* lower BMI
+* who smoke
+* who drink alcohol
+
+may have a higher probability of abnormal BMD, though the binomial confidence intervals overlap in most cases.
+
+Low Vitamin D and high PTH, do not seem associated with increased probability of abnormal BMD.
+
+
+```{r , warning=FALSE, message=FALSE, echo=F, fig.height=8, fig.width=8}
+
+
+db <- readRDS(file=file.path(indir.data,file.path.bl.data.clean))
+dt <- readRDS(file=file.path(indir.data,file.path.results.data.clean))
+
+dt <- merge(dt,subset(db,select=c('study_id','ethnicity','BMI','fam_hx_bone_disease',
+                                  'smoking','alcohol_units','phys_activity','BMD_z')),
+            by='study_id',all.x=T)
+
+dt <- clean_data(dt)
+
+#dt[, abnormal_bmd:= factor(ifelse(grepl('osteo|OSTE|osto|z=-1|z=-2|z score=          -1',BMD_z)|BMD_LS_Z<= -1,1,0),
+#                              levels=c(0,1),labels=c('Normal','Abnormal'))]
+dt[, abnormal_bmd:=factor(ifelse(BMD_LS_Z<=-1 | (!is.na(hip_Z) & hip_Z<=-1), 1, 0),levels=c(0,1),labels=c('Normal','Abnormal'))]
+
+dt[!is.na(smoking), smoke:= ifelse(smoking %in% c('No','Ex-smoker'),'No_ex','Yes')]
+dt[!is.na(smoking), ever_smoke:= ifelse(smoking =='No','No','Yes')]
+dt[, bmi_cat:= cut(BMI,breaks=c(0,18.5,25,30,50),include.lowest=T,right=F,
+                    labels=c('<18.5','[18.5-25)','[25-30)','30+'))]
+dt[, alcohol:= ifelse(alcohol_units>0 ,'Yes','No')]
+dt[, abnormal_vitD:= ifelse(vitD<= 50,1,0)]
+dt[, high_PTH:= ifelse(PTH>= 7.2,1,0)]
+dt[, PA:= substr(phys_activity,1,2)]
+dt[, cdcc_lowvl:= ifelse(CDC_C=='Yes' | VL=='<200' | VL=='<20',1,0)]
+
+tmp <- subset(dt,visit == 'baseline')
+
+tab <- list()
+
+tab[['age_gp']] <- tmp[, list(var='Age group',N=.N), by=c('age_group','abnormal_bmd')]
+counts <- tmp[, list(tot=.N), by=c('age_group')]
+tab[['age_gp']] <- merge(tab[['age_gp']],counts,by='age_group')
+
+tab[['cdcc']] <- tmp[CDC_C %in% c('Yes','No'), list(var='Prior CDC C,\nCD4% 200 cells/ul\nor <20%',N=.N), by=c('CDC_C','abnormal_bmd')]
+counts <- tmp[CDC_C %in% c('Yes','No'), list(tot=.N), by=c('CDC_C')]
+tab[['cdcc']] <- merge(tab[['cdcc']],counts,by='CDC_C')
+
+tab[['TDF']] <- tmp[TDF_exp %in% c('Y','N'), list(var='Any TDF exposure',N=.N), by=c('TDF_exp','abnormal_bmd')]
+counts <- tmp[TDF_exp %in% c('Y','N'), list(tot=.N), by=c('TDF_exp')]
+tab[['TDF']] <- merge(tab[['TDF']],counts,by='TDF_exp')
+
+tab[['ART']] <- tmp[, list(var='Current ART regimen',N=.N), by=c('ART_reg','abnormal_bmd')]
+counts <- tmp[, list(tot=.N), by=c('ART_reg')]
+tab[['ART']] <- merge(tab[['ART']],counts,by='ART_reg')
+
+tab[['fm_hx']] <- tmp[fam_hx_bone_disease %in% c('Yes','No'), list(var='Family history\nof bone disease',N=.N), by=c('fam_hx_bone_disease','abnormal_bmd')]
+counts <- tmp[fam_hx_bone_disease %in% c('Yes','No'), list(tot=.N), by=c('fam_hx_bone_disease')]
+tab[['fm_hx']] <- merge(tab[['fm_hx']],counts,by='fam_hx_bone_disease')
+
+tab[['phys']] <- tmp[PA %in% c('A','B','C','D','E'), list(var='Physical activity level',N=.N), by=c('PA','abnormal_bmd')]
+counts <- tmp[, list(tot=.N), by=c('PA')]
+tab[['phys']] <- merge(tab[['phys']],counts,by='PA')
+
+tab[['mob']] <- tmp[reduced_mobility %in% c('Yes','No'), list(var='Reduced mobilisation',N=.N), by=c('reduced_mobility','abnormal_bmd')]
+counts <- tmp[reduced_mobility %in% c('Yes','No'), list(tot=.N), by=c('reduced_mobility')]
+tab[['mob']] <- merge(tab[['mob']],counts,by='reduced_mobility')
+
+tab[['bmi_cat']] <- tmp[, list(var='BMI category',N=.N), by=c('bmi_cat','abnormal_bmd')]
+counts <- tmp[, list(tot=.N), by=c('bmi_cat')]
+tab[['bmi_cat']] <- merge(tab[['bmi_cat']],counts,by='bmi_cat')
+
+tab[['smoke']] <- tmp[, list(var='Smoking',N=.N), by=c('smoke','abnormal_bmd')]
+counts <- tmp[, list(tot=.N), by=c('smoke')]
+tab[['smoke']] <- merge(tab[['smoke']],counts,by='smoke')
+
+tab[['ever_smoke']] <- tmp[, list(var='Ever smoked',N=.N), by=c('ever_smoke','abnormal_bmd')]
+counts <- tmp[, list(tot=.N), by=c('ever_smoke')]
+tab[['ever_smoke']] <- merge(tab[['ever_smoke']],counts,by='ever_smoke')
+
+tab[['alcohol']] <- tmp[, list(var='Drinks alcohol',N=.N), by=c('alcohol','abnormal_bmd')]
+counts <- tmp[, list(tot=.N), by=c('alcohol')]
+tab[['alcohol']] <- merge(tab[['alcohol']],counts,by='alcohol')
+
+tab[['vitd']] <- tmp[, list(var='Vitamin D (nmol/L)',N=.N), by=c('abnormal_vitD','abnormal_bmd')]
+counts <- tmp[, list(tot=.N), by=c('abnormal_vitD')]
+tab[['vitd']] <- merge(tab[['vitd']],counts,by='abnormal_vitD')
+
+tab[['pth']] <- tmp[, list(var='PTH (pmol/L)',N=.N), by=c('high_PTH','abnormal_bmd')]
+counts <- tmp[, list(tot=.N), by=c('high_PTH')]
+tab[['pth']] <- merge(tab[['pth']],counts,by='high_PTH')
+
+names <- names(tab)#[!names(tab) %in% c('eth','vl')]
+for(i in names){
+  #tab[[i]][, group:= '']
+  #setcolorder(tab[[i]], neworder = c('age_group','group'))
+  setnames(tab[[i]],1,'group')
+}
+
+tab <- do.call(`rbind`,tab)
+tab[, var:= factor(var, levels=c(unique(tab$var)))]
+tab <- subset(tab,!is.na(group) )
+  
+tab[, c('p','CL','CU') := Hmisc::binconf(x=N,n=tot,return.df=T)]
+
+pal <- pal_npg('nrc')(10)
+
+ggplot(tab, aes(x=group, y=p, colour=abnormal_bmd)) +
+  geom_point(position=position_dodge(width=0.5)) +
+  geom_errorbar(aes(x=group,ymin=CL,ymax=CU,colour=abnormal_bmd),width=0.4,position=position_dodge(width=0.5)) +
+  facet_wrap(.~var,scales='free') +
+  scale_y_continuous(limits=c(0,1)) +
+  scale_colour_manual(values=pal[2:1]) +
+  labs(x='',y='Probability of abnormal BMD (<-1)',colour='BMD') +
+  theme_bw() +
+  theme(strip.background=element_blank(),
+        axis.text.x = element_text(angle=60, vjust = 0.95,hjust = 0.9))
+
+```
+
+#### Abnormal BMD: Zscore < -2  {.tabset}
+
+##### Variables associated with abnormal BMD at baseline
+
+We tabulate the putative risk factors against abnormal BMD, defined as,
+
+$$Y = 
+\begin{cases}
+1 \;\text{if} \;
+ \text{Z}_{LS} \;\le\; -2\; \bigcup\; \text{Z}_{hip}\; \le\; -2\\
+0 \;\text{otherwise}
+\end{cases}
+$$
+
+```{r , warning=FALSE, message=FALSE, echo=F, fig.height=6}
+
+tmp <- readRDS(file=file.path(indir.data,'results',args$analysis,gsub('.csv','.RDS',table.predictors.bmd)))
+
+kable(tmp, "html", escape = F, align = "rrrrr") %>%
+  kable_styling(full_width = T, position = "center")
+
+
+```
+
+##### Plots of putative risk factors for low BMD
+
+We can also plot the proportions of participants with low BMD (zscore<$-2$) with Agresti-Coull confidence intervals.
+
+From the empirical plots, it looks as though participants with 
+
+* older age groups
+* prior CDC C diagnosis
+* TDF exposure
+* a family history of bone disease 
+* reduced mobilisation 
+* lower BMI
+* who smoke
+* who drink alcohol
+
+may have a higher probability of abnormal BMD, though the binomial confidence intervals overlap in most cases.
+
+Low Vitamin D and high PTH, do not seem associated with increased probability of abnormal BMD.
+
+
+```{r , warning=FALSE, message=FALSE, echo=F, fig.height=8, fig.width=8}
+
+
+db <- readRDS(file=file.path(indir.data,file.path.bl.data.clean))
+dt <- readRDS(file=file.path(indir.data,file.path.results.data.clean))
+
+dt <- merge(dt,subset(db,select=c('study_id','ethnicity','BMI','fam_hx_bone_disease',
+                                  'smoking','alcohol_units','phys_activity','BMD_z')),
+            by='study_id',all.x=T)
+
+dt <- clean_data(dt)
+
+#dt[, abnormal_bmd:= factor(ifelse(grepl('osteo|OSTE|osto|z=-1|z=-2|z score=          -1',BMD_z)|BMD_LS_Z<= -1,1,0),
+#                              levels=c(0,1),labels=c('Normal','Abnormal'))]
+dt[, abnormal_bmd:=factor(ifelse(BMD_LS_Z<=-2 | (!is.na(hip_Z) & hip_Z<=-2), 1, 0),levels=c(0,1),labels=c('Normal','Abnormal'))]
+
+dt[!is.na(smoking), smoke:= ifelse(smoking %in% c('No','Ex-smoker'),'No_ex','Yes')]
+dt[!is.na(smoking), ever_smoke:= ifelse(smoking =='No','No','Yes')]
+dt[, bmi_cat:= cut(BMI,breaks=c(0,18.5,25,30,50),include.lowest=T,right=F,
+                    labels=c('<18.5','[18.5-25)','[25-30)','30+'))]
+dt[, alcohol:= ifelse(alcohol_units>0 ,'Yes','No')]
+dt[, abnormal_vitD:= ifelse(vitD<= 50,1,0)]
+dt[, high_PTH:= ifelse(PTH>= 7.2,1,0)]
+dt[, PA:= substr(phys_activity,1,2)]
+dt[, cdcc_lowvl:= ifelse(CDC_C=='Yes' | VL=='<200' | VL=='<20',1,0)]
+
+tmp <- subset(dt,visit == 'baseline')
+
+tab <- list()
+
+tab[['age_gp']] <- tmp[, list(var='Age group',N=.N), by=c('age_group','abnormal_bmd')]
+counts <- tmp[, list(tot=.N), by=c('age_group')]
+tab[['age_gp']] <- merge(tab[['age_gp']],counts,by='age_group')
+
+tab[['cdcc']] <- tmp[CDC_C %in% c('Yes','No'), list(var='Prior CDC C,\nCD4% 200 cells/ul\nor <20%',N=.N), by=c('CDC_C','abnormal_bmd')]
+counts <- tmp[CDC_C %in% c('Yes','No'), list(tot=.N), by=c('CDC_C')]
+tab[['cdcc']] <- merge(tab[['cdcc']],counts,by='CDC_C')
+
+tab[['TDF']] <- tmp[TDF_exp %in% c('Y','N'), list(var='Any TDF exposure',N=.N), by=c('TDF_exp','abnormal_bmd')]
+counts <- tmp[TDF_exp %in% c('Y','N'), list(tot=.N), by=c('TDF_exp')]
+tab[['TDF']] <- merge(tab[['TDF']],counts,by='TDF_exp')
+
+tab[['ART']] <- tmp[, list(var='Current ART regimen',N=.N), by=c('ART_reg','abnormal_bmd')]
+counts <- tmp[, list(tot=.N), by=c('ART_reg')]
+tab[['ART']] <- merge(tab[['ART']],counts,by='ART_reg')
+
+tab[['fm_hx']] <- tmp[fam_hx_bone_disease %in% c('Yes','No'), list(var='Family history\nof bone disease',N=.N), by=c('fam_hx_bone_disease','abnormal_bmd')]
+counts <- tmp[fam_hx_bone_disease %in% c('Yes','No'), list(tot=.N), by=c('fam_hx_bone_disease')]
+tab[['fm_hx']] <- merge(tab[['fm_hx']],counts,by='fam_hx_bone_disease')
+
+tab[['phys']] <- tmp[PA %in% c('A','B','C','D','E'), list(var='Physical activity level',N=.N), by=c('PA','abnormal_bmd')]
+counts <- tmp[, list(tot=.N), by=c('PA')]
+tab[['phys']] <- merge(tab[['phys']],counts,by='PA')
+
+tab[['mob']] <- tmp[reduced_mobility %in% c('Yes','No'), list(var='Reduced mobilisation',N=.N), by=c('reduced_mobility','abnormal_bmd')]
+counts <- tmp[reduced_mobility %in% c('Yes','No'), list(tot=.N), by=c('reduced_mobility')]
+tab[['mob']] <- merge(tab[['mob']],counts,by='reduced_mobility')
+
+tab[['bmi_cat']] <- tmp[, list(var='BMI category',N=.N), by=c('bmi_cat','abnormal_bmd')]
+counts <- tmp[, list(tot=.N), by=c('bmi_cat')]
+tab[['bmi_cat']] <- merge(tab[['bmi_cat']],counts,by='bmi_cat')
+
+tab[['smoke']] <- tmp[!is.na(smoke), list(var='Smoking',N=.N), by=c('smoke','abnormal_bmd')]
+counts <- tmp[, list(tot=.N), by=c('smoke')]
+tab[['smoke']] <- merge(tab[['smoke']],counts,by='smoke')
+
+tab[['ever_smoke']] <- tmp[!is.na(ever_smoke), list(var='Ever smoked',N=.N), by=c('ever_smoke','abnormal_bmd')]
+counts <- tmp[, list(tot=.N), by=c('ever_smoke')]
+tab[['ever_smoke']] <- merge(tab[['ever_smoke']],counts,by='ever_smoke')
+
+tab[['alcohol']] <- tmp[, list(var='Drinks alcohol',N=.N), by=c('alcohol','abnormal_bmd')]
+counts <- tmp[, list(tot=.N), by=c('alcohol')]
+tab[['alcohol']] <- merge(tab[['alcohol']],counts,by='alcohol')
+
+tab[['vitd']] <- tmp[, list(var='Vitamin D (nmol/L)',N=.N), by=c('abnormal_vitD','abnormal_bmd')]
+counts <- tmp[, list(tot=.N), by=c('abnormal_vitD')]
+tab[['vitd']] <- merge(tab[['vitd']],counts,by='abnormal_vitD')
+
+tab[['pth']] <- tmp[, list(var='PTH (pmol/L)',N=.N), by=c('high_PTH','abnormal_bmd')]
+counts <- tmp[, list(tot=.N), by=c('high_PTH')]
+tab[['pth']] <- merge(tab[['pth']],counts,by='high_PTH')
+
+names <- names(tab)#[!names(tab) %in% c('eth','vl')]
+for(i in names){
+  #tab[[i]][, group:= '']
+  #setcolorder(tab[[i]], neworder = c('age_group','group'))
+  setnames(tab[[i]],1,'group')
+}
+
+tab <- do.call(`rbind`,tab)
+tab[, var:= factor(var, levels=c(unique(tab$var)))]
+tab <- subset(tab,!is.na(group) )
+  
+tab[, c('p','CL','CU') := Hmisc::binconf(x=N,n=tot,return.df=T)]
+
+pal <- pal_npg('nrc')(10)
+
+ggplot(tab, aes(x=group, y=p, colour=abnormal_bmd)) +
+  geom_point(position=position_dodge(width=0.5)) +
+  geom_errorbar(aes(x=group,ymin=CL,ymax=CU,colour=abnormal_bmd),width=0.4,position=position_dodge(width=0.5)) +
+  facet_wrap(.~var,scales='free') +
+  scale_y_continuous(limits=c(0,1)) +
+  scale_colour_manual(values=pal[2:1]) +
+  labs(x='',y='Probability of abnormal BMD (<-2)',colour='BMD') +
+  theme_bw() +
+  theme(strip.background=element_blank(),
+        axis.text.x = element_text(angle=60, vjust = 0.95,hjust = 0.9))
+
+```
+
+
+### Identifying risk factors with logistic regression models {.tabset}
+
+We first fit univariable models to examine the association of each of the putative risk factors with having an abnormal BMD in the lumbar spine at baseline. Since Z scores are standardised for age/sex/ethnicity, we don't need to adjust for these potential confounders. We assume some weakly informative priors for the regression coefficients, with the full model described by,
+
+$$
+\boldsymbol{Y}\sim \text{Bernoulli}(\boldsymbol{\pi})\\
+\text{logit}(\boldsymbol{\pi}) = \alpha + \boldsymbol{\beta}\boldsymbol{X},\\
+\alpha \sim \text{N}(0,5^2),\\
+\boldsymbol{\beta} \sim \text{N}(0,1^2).
+$$
+
+#### Zscore below -1
+
+Several covariates are associated with increased odds of abnormal BMD, though none are significant.
+
+```{r , warning=FALSE, message=FALSE, echo=F, fig.height=6}
+
+load(file=file.path(indir.data,'results','241010_abnormal_minus1','univariable_models_priors_N02_stanfit.rdata'))
+
+coeffs <- rbind(model_age[[2]],
+                model_cdcc[[2]],
+                model_tdf[[2]],
+                model_tdf_length[[2]],
+                model_art[[2]],
+                model_fhb[[2]],
+                model_mob[[2]],
+                model_bmi_cat[[2]],
+                model_smoking[[2]],
+                model_eversmoked[[2]],
+                model_alc[[2]],
+                model_vitD[[2]],
+                model_pth[[2]])
+coeffs <- data.table(subset(coeffs,Term!='Intercept'))
+coeffs[Term=='age_group20M24', Term:= 'Age: 20-24 vs. 15-19']
+coeffs[Term=='age_group25P', Term:= 'Age: 25+ vs. 15-19']
+coeffs[Term=='cdcc_lowvl', Term:= 'Prior CDC C,\nCD4% 200 cells/ul\nor <20%']
+coeffs[Term=='TDF_expY', Term:= 'Prior TDF exposure']
+coeffs[Term=='TDF_duration', Term:= 'Duration on TDF (years)']
+coeffs[Term=='ART_regINSTI_2NRTI', Term:= 'ART reg: INSTI vs. TDF']
+coeffs[Term=='ART_regbPI_2NRTI', Term:= 'ART reg: PI vs. TDF']
+coeffs[Term=='ART_regNNRTI_2NRTI', Term:= 'ART reg: NNRTI vs. TDF']
+coeffs[Term=='fam_hx_bone_diseaseYes', Term:= 'Family history of\nbone disease']
+coeffs[Term=='reduced_mobilityYes', Term:= 'Reduced mobilisation']
+coeffs[Term=='bmi_cat<18.5', Term:= 'BMI: <18.5 vs. 18.5-25']
+coeffs[Term=='bmi_cat25M30', Term:= 'BMI: 25-30 vs. 18.5-25']
+coeffs[Term=='bmi_cat30P', Term:= 'BMI: 30+ vs. 18.5-25']
+coeffs[Term=='smokeYes', Term:= 'Smoker: Current vs. never/ex']
+coeffs[Term=='ever_smokeYes', Term:= 'Smoker: Ever smoked vs. never']
+coeffs[Term=='alcoholYes', Term:= 'Drinks alcohol']
+coeffs[Term=='abnormal_vitD', Term:= 'Vitamin D <= 50 nmol/L']
+coeffs[Term=='high_PTH', Term:= 'PTH >= 7.2 pmol/L']
+
+coeff_order <- c("Age","CDCC","TDF","TDF_duration","ART","FHB","Mobility", "BMI","Smoking","Alcohol","VitaminD","PTH")
+coeffs[, model:= factor(model, levels=c(rev(coeff_order)))]
+coeffs[, Term:= factor(Term, levels=rev(unique(coeffs$Term)))]
+
+pal <- pal_npg('nrc')(10)
+pal2 <- pal_nejm('default')(8)
+
+ggplot(coeffs, aes(x = Estimate, y = Term, color = model)) +
+  geom_point(size = 4) +
+  geom_errorbarh(aes(xmin = LowerCI, xmax = UpperCI), height = 0.2) +
+  scale_color_manual(values=c(pal,pal2)) + 
+  xlab("Odds Ratio") +
+  ylab("Predictor") +
+  scale_x_log10() +
+  theme_minimal() +
+  geom_vline(xintercept = 1, linetype = "dashed", color = "grey30") +
+  #ggtitle("Forest Plot of Predictors from Univariable\nBayesian Logistic Regression Models") +
+  theme(legend.position="none")
+
+if(args$save_figs==T) ggsave(file=file.path(indir.data,'results',args$analysis,'forest_plot_LS_BMD_blthrsh_minus1.pdf'),h=6,w=5,bg="white")
+
+coeffs[, L:= paste0(round(Estimate,2),' [',round(LowerCI,2),'-',round(UpperCI,2),']')]
+
+tab <- subset(coeffs,select=c('Term','L'))
+
+setnames(tab,c('Term','L'),c('Predictor','Odds ratio [95% CrI]'))
+
+kable(tab, "html", escape = F, align = "rr") %>%
+  kable_styling(full_width = F, position = "center")
+
+```
+
+With Bayesian analysis, we can make direct probabilistic statements about the parameters of interest (estimated odds ratios). We report the posterior probability the odds ratios are larger than 1, which is similar to a p-value in frequentist statistics, but corresponds to the probability of the odds ratio exceeding the null of 1 (i.e. risk factor is not associated with odds of abnormal BMD). A probability >95\% would give strong evidence that a covariate is associated with an increased odds of abnormal BMD, and we would observe a lower bound on the credible interval greater than 1.
+
+```{r , warning=FALSE, message=FALSE, echo=F, fig.height=6}
+
+pval <- fread(file = file.path(indir.data,'results','241010_abnormal_minus1','univariable_models_priors_N02_pvalues.csv'))
+pval <- pval[, c('model','Term','pval')]
+pval[, pval:= round(pval,2)]
+setnames(pval,'pval','Posterior probability odds ratio >1')
+
+kable(pval, "html", escape = F, align = "rrr") %>%
+  kable_styling(full_width = F, position = "center")
+
+```
+
+#### Zscore below -2
+
+Several covariates are associated with increased odds of abnormal BMD, though none are significant.
+
+```{r , warning=FALSE, message=FALSE, echo=F, fig.height=6}
+
+load(file=file.path(indir.data,'results',args$analysis,'univariable_models_priors_N02_stanfit.rdata'))
+
+coeffs <- rbind(model_age[[2]],
+                model_cdcc[[2]],
+                model_tdf[[2]],
+                model_tdf_length[[2]],
+                model_art[[2]],
+                model_fhb[[2]],
+                model_mob[[2]],
+                model_bmi_cat[[2]],
+                model_smoking[[2]],
+                model_alc[[2]],
+                model_vitD[[2]],
+                model_pth[[2]])
+coeffs <- data.table(subset(coeffs,Term!='Intercept'))
+coeffs[Term=='age_group20M24', Term:= 'Age: 20-24 vs. 15-19']
+coeffs[Term=='age_group25P', Term:= 'Age: 25+ vs. 15-19']
+coeffs[Term=='cdcc_lowvl', Term:= 'Prior CDC C,\nCD4% 200 cells/ul\nor <20%']
+coeffs[Term=='TDF_expY', Term:= 'Prior TDF exposure']
+coeffs[Term=='TDF_duration', Term:= 'Duration on TDF (years)']
+coeffs[Term=='ART_regINSTI_2NRTI', Term:= 'ART reg: INSTI vs. TDF']
+coeffs[Term=='ART_regbPI_2NRTI', Term:= 'ART reg: PI vs. TDF']
+coeffs[Term=='ART_regNNRTI_2NRTI', Term:= 'ART reg: NNRTI vs. TDF']
+coeffs[Term=='fam_hx_bone_diseaseYes', Term:= 'Family history of\nbone disease']
+coeffs[Term=='reduced_mobilityYes', Term:= 'Reduced mobilisation']
+coeffs[Term=='bmi_cat<18.5', Term:= 'BMI: <18.5 vs. 18.5-25']
+coeffs[Term=='bmi_cat25M30', Term:= 'BMI: 25-30 vs. 18.5-25']
+coeffs[Term=='bmi_cat30P', Term:= 'BMI: 30+ vs. 18.5-25']
+coeffs[Term=='smokeYes', Term:= 'Smoker: Current vs. never/ex']
+coeffs[Term=='ever_smokeYes', Term:= 'Smoker: Ever smoked vs. never']
+coeffs[Term=='alcoholYes', Term:= 'Drinks alcohol']
+coeffs[Term=='abnormal_vitD', Term:= 'Vitamin D <= 50 nmol/L']
+coeffs[Term=='high_PTH', Term:= 'PTH >= 7.2 pmol/L']
+
+coeff_order <- c("Age","CDCC","TDF","TDF_duration","ART","FHB","Mobility", "BMI","Smoking","Alcohol","VitaminD","PTH")
+coeffs[, model:= factor(model, levels=c(rev(coeff_order)))]
+coeffs[, Term:= factor(Term, levels=rev(unique(coeffs$Term)))]
+
+pal <- pal_npg('nrc')(10)
+pal2 <- pal_nejm('default')(8)
+
+ggplot(coeffs, aes(x = Estimate, y = Term, color = model)) +
+  geom_point(size = 4) +
+  geom_errorbarh(aes(xmin = LowerCI, xmax = UpperCI), height = 0.2) +
+  scale_color_manual(values=c(pal,pal2)) + 
+  xlab("Odds Ratio") +
+  ylab("Predictor") +
+  scale_x_log10() +
+  theme_minimal() +
+  geom_vline(xintercept = 1, linetype = "dashed", color = "grey30") +
+  #ggtitle("Forest Plot of Predictors from Univariable\nBayesian Logistic Regression Models") +
+  theme(legend.position="none")
+
+if(args$save_figs==T) ggsave(file=file.path(indir.data,'results',args$analysis,'forest_plot_LS_BMD_blthrsh_minus2.pdf'),h=6,w=5,bg="white")
+
+
+coeffs[, L:= paste0(round(Estimate,2),' [',round(LowerCI,2),'-',round(UpperCI,2),']')]
+
+tab <- subset(coeffs,select=c('Term','L'))
+
+setnames(tab,c('Term','L'),c('Predictor','Odds ratio [95% CrI]'))
+
+kable(tab, "html", escape = F, align = "rr") %>%
+  kable_styling(full_width = F, position = "center")
+
+pval <- fread(file = file.path(indir.data,'results',args$analysis,'univariable_models_priors_N02_pvalues.csv'))
+pval <- pval[, c('model','Term','pval')]
+pval[, pval:= round(pval,2)]
+setnames(pval,'pval','Posterior probability odds ratio >1')
+
+kable(pval, "html", escape = F, align = "rrr") %>%
+  kable_styling(full_width = F, position = "center")
+
+```
+
+# Follow-up visit {.tabset}
+
+The table below summarises the follow-up scan results, stratified by the same potential risk factors. We also tabulate covariates for participants who dropped out/had no second scan, in case this is associated with their risk factors.
+
+## Zscore below -1
+
+```{r , warning=FALSE, message=FALSE, echo=F, fig.height=4, fig.width=4}
+
+tmp <- readRDS(file=file.path(indir.data,'results','241010_abnormal_minus1',gsub('.csv','.RDS',table.predictors.bmd.fu)))
+
+kable(tmp, "html", escape = F, align = "rrrrr") %>%
+  kable_styling(full_width = T, position = "center")
+
+```
+
+## Zscore below -2
+
+```{r , warning=FALSE, message=FALSE, echo=F, fig.height=4, fig.width=4}
+
+tmp <- readRDS(file=file.path(indir.data,'results',args$analysis,gsub('.csv','.RDS',table.predictors.bmd.fu)))
+
+kable(tmp, "html", escape = F, align = "rrrrr") %>%
+  kable_styling(full_width = T, position = "center")
+
+```
+
+
+# Change in BMD over 24 month follow-up  {.tabset}
+
+We are now interested in the change in BMD Z-score over the 24 month follow-up period. We consider the lumbar spine meaurements only, since hip scans were not done for 15-19 year olds at baseline.
+
+Follow-up scans were done for 15-19 year olds and 20-24 year olds, since those 25+ at enrolment should have reached peak bone mass accrual by baseline. We now assess the gain in bone density over 24 months of follow-up for under 25s.
+
+We model the change in BMD Zscore in the lumbar spine. Since the Zscore is standardised against age/ethnicity matched controls, we can interpret a change of 0 to indicate normal BMD accrual. We would expect that for normal BMD accrual, participants with a positive Zscore at baseline would also have a positive Zscore at follow-up. Similarly, those with an abnormal Zscore at baseline may be expected to have an abnormal Zscore at follow-up. Plotting these shows a clear correlation between baseline and follow-up scores, as expected.
+
+```{r , warning=FALSE, message=FALSE, echo=F, fig.height=4, fig.width=4}
+
+dt <- readRDS(file=file.path(indir.data,'results',args$analysis,'cleaned_data.RDS'))
+dc <- subset(dt,visit=='baseline')
+df <- subset(dt,visit=='follow-up', select=c('study_id','date_scan','BMD','BMD_LS_Z','TAF_duration'))
+dc <- merge(dc,df,by='study_id')
+setnames(dc,c('date_scan.x','date_scan.y','BMD.x','BMD.y','BMD_LS_Z.x','BMD_LS_Z.y','TAF_duration.x','TAF_duration.y'),
+         c('date_scan_bl','date_scan_fu','BMD_bl','BMD_fu','BMD_LS_Z_bl','BMD_LS_Z_fu','TAF_duration_bl','TAF_duration_fu'))
+
+dc[, change_BMD_raw:= BMD_fu - BMD_bl]
+dc[, change_BMD_LS:= BMD_LS_Z_fu - BMD_LS_Z_bl]
+
+# remove participants with no follow-up scan
+dc <- subset(dc,!is.na(BMD_LS_Z_fu))
+
+ggplot(dc,aes(x=BMD_LS_Z_bl,y=BMD_LS_Z_fu)) + 
+  geom_abline(slope=1, intercept = 0,linetype=2) +
+  geom_point(col=pal[1]) + 
+  labs(x='BMD zscore (LS) at baseline', y='BMD zscore (LS) at follow-up') +
+  theme_bw()
+
+```
+
+We summarise the change in Zscores overall and by age group
+
+```{r , warning=FALSE, message=FALSE, echo=F, fig.height=4, fig.width=4}
+
+tmp <- dc[, list(age_group='overall',
+                 mean=mean(change_BMD_LS),
+                 sd=sd(change_BMD_LS))]
+tmp2 <- dc[, list(mean=mean(change_BMD_LS),
+                 sd=sd(change_BMD_LS)),by='age_group']
+tmp <- rbind(tmp,tmp2)
+
+tmp[, `mean change in zscore (sd)`:= paste0(round(mean,2),' (',round(sd,2),')')]
+tmp <- tmp[, c('age_group','mean change in zscore (sd)')]
+
+kable(tmp, "html", escape = F, align = "rr") %>%
+  kable_styling(full_width = F, position = "center")
+
+
+```
+
+
+Plotting the change in Zscore against baseline scores, they look reasonably uncorrelated. This is promising, as it suggests that those who started with poorer bone health did not worsen, and  accrual of BMD did not depend on initial bone health at baseline. However, we will adjust for baseline scores when modelling change in zscore to identify risk factors on BMD accrual for participants with the same baseline measurements.
+
+```{r , warning=FALSE, message=FALSE, echo=F, fig.height=4, fig.width=4}
+
+ggplot(dc) + 
+  geom_hline(yintercept=0,linetype=2) +
+  geom_point(aes(x=BMD_LS_Z_bl,y=change_BMD_LS),col=pal[1]) + 
+  labs(x='BMD zscore (LS) at baseline', y='Change in BMD zscore (LS) at follow-up') +
+  theme_bw()
+
+```
+
+## Empirical analysis
+
+Plotting the empirical data do not show many clear associations with potential risk factors
+
+
+```{r , warning=FALSE, message=FALSE, echo=F, fig.height=6, fig.width=8}
+
+drisk <- subset(dc,select=c('age_group','cdcc_lowvl','TDF_exp','TDF_duration','ART_reg','fam_hx_bone_disease','reduced_mobility','bmi_cat','smoke','ever_smoke','alcohol','abnormal_vitD','high_PTH','abnormal_bmd','change_BMD_LS'))
+
+drisk <- melt(drisk,id.vars=c('change_BMD_LS','abnormal_bmd'))
+drisk <- subset(drisk, !value %in% c('NR','ND','select y/n',NA))
+
+drisk[, value:= factor(value,
+                       levels=c(sort(unique(dc$age_group)),
+                       sort(unique(as.numeric(dc$TDF_duration))),
+                       sort(unique(as.character(dc$bmi_cat))),
+                       sort(unique(as.character(dc$ART_reg))),
+                       'N','No','No_ex','Yes','Y'))]
+
+summary_stats <- drisk %>%
+  group_by(variable, value) %>%
+  summarise(
+    mean_change = mean(change_BMD_LS, na.rm = TRUE),
+    lower_ci = mean_change - 1.96 * (sd(change_BMD_LS, na.rm = TRUE) / sqrt(n())),
+    upper_ci = mean_change + 1.96 * (sd(change_BMD_LS, na.rm = TRUE) / sqrt(n()))
+  )
+
+# use t-dist 
+drisk_summary <- drisk %>%
+  group_by(variable, value) %>%  # Group by the variables of interest
+  summarise(
+    mean_BMD = mean(change_BMD_LS, na.rm = TRUE),  # Compute the mean
+    n = n(),  # Count the number of observations
+    se = ifelse(n() > 1, sd(change_BMD_LS, na.rm = TRUE) / sqrt(n()), NA),  # Compute standard error
+    ci_lower = ifelse(n() > 1, mean_BMD - qt(0.975, df = n() - 1) * se, NA),  # Lower CI
+    ci_upper = ifelse(n() > 1, mean_BMD + qt(0.975, df = n() - 1) * se, NA)  # Upper CI
+  ) %>%
+  filter(!is.na(mean_BMD))  # Filter out groups with missing data for mean_BMD
+
+if(0){
+drisk_summary <- drisk[, list(mean_BMD = mean(change_BMD_LS, na.rm = TRUE),  # Compute the mean
+    n = n(),  # Count the number of observations
+    se = ifelse(n() > 1, sd(change_BMD_LS, na.rm = TRUE) / sqrt(n()), NA),  # Compute standard error
+    ci_lower = ifelse(n() > 1, mean_BMD - qt(0.975, df = n() - 1) * se, NA),  # Lower CI
+    ci_upper = ifelse(n() > 1, mean_BMD + qt(0.975, df = n() - 1) * se, NA)  # Upper CI
+    ), by=c('variable','value')]
+drisk_summary <- drisk_summary[!is.na(mean_BMD),]
+}
+
+pal <- pal_npg('nrc')(10)
+
+ggplot() +
+    geom_point(data=drisk, aes(x = value, y = change_BMD_LS),position = position_dodge(width = 0.5), colour = pal[2]) +  # Original points
+    geom_boxplot(data=drisk, aes(x = value, y = change_BMD_LS),fill=NA,color=pal[4]) +  # Original points
+    facet_wrap(.~variable, scales = 'free') +
+    labs(x = '', y = 'Change in BMD Zscore', colour = 'BMD') +
+    theme_bw() +
+    theme(strip.background = element_blank(),
+                  axis.text.x = element_text(angle=60, vjust = 0.95,hjust = 0.9)) #+
+    # Add mean points and error bars for CIs using summarized data
+    #geom_point(data = drisk_summary, aes(x = value, y = mean_BMD), colour = pal[1], size = 3) +  # Mean points
+    #geom_errorbar(data = drisk_summary, aes(x = value, ymin = ci_lower, ymax = ci_upper), width = 0.2, colour = pal[1])  # Error bars for CI
+
+```
+
+## Identifying risk factors with linear regression models
+
+We model this through a simple linear regression model,
+
+$$
+\boldsymbol{Y} = \alpha + \boldsymbol{\beta}\boldsymbol{X} ,\\
+\alpha \sim \text{N}(0,5^2),\\
+\boldsymbol{\beta} \sim \text{N}(0,1^2).
+$$
+
+### Traditional and non-traditional risk factors
+
+We adjust for participants' baseline values of BMD, so we compare the change in BMD among individuals with the same baseline value.
+
+Forest Plot of Predictors from Bayesian linear regression model. Factors associated with a decrease in BMD Zscore compared with matched controls would have a coefficient below 0.
+
+We find that:
+
+* Participants aged 20-24 at enrolment had significantly greater BMD accrual compared with participants ages 15-19
+* Participants with raised parathyroid hormone (PTH) were found to have a significantly greater BMD accrual than those with normal levels. This is unexpected, since we would expect raised PTH to be negatively associated with bone density accrual.
+
+HIV severity (prior AIDs defining illness/CD4 nadir <200) is not found to be associated with accrual of BMD relative to matched controls. Other traditional risk factors are also found to have no significant association with BMD accrual.
+
+
+```{r , warning=FALSE, message=FALSE, echo=F, fig.height=6}
+
+
+load(file=file.path(indir.data,'results',args$analysis,'change_BMD_LS_adjust_bl_priors_N02_stanfit.rdata'))
+
+coeffs <- rbind(model_adj_age[[2]],
+                model_adj_cdcc[[2]],
+                model_adj_tdf[[2]],
+                model_adj_tdf_length[[2]],
+                model_adj_art[[2]],
+                model_adj_fhb[[2]],
+                model_adj_mob[[2]],
+                model_adj_bmi_cat[[2]],
+                model_adj_smoking[[2]],
+                model_adj_alc[[2]],
+                model_adj_vitD[[2]],
+                model_adj_pth[[2]])
+coeffs <- data.table(subset(coeffs,Term!='Intercept'))
+coeffs <- data.table(subset(coeffs,!grepl('BMD_LS_Z_bl', Term)))
+coeffs <- data.table(subset(coeffs,!grepl('ethnicity', Term)))
+coeffs <- data.table(subset(coeffs,!grepl('sex', Term)))
+coeffs <- data.table(subset(coeffs,!(grepl('age_group', Term) & model!='Age')))
+
+coeffs[Term=='age_group20M24', Term:= '20-24 vs. 15-19']
+coeffs[Term=='age_group25P', Term:= '25+ vs. 15-19']
+coeffs[Term=='cdcc_lowvl', Term:= 'Prior CDC C,\nCD4% 200 cells/ul\nor <20%']
+coeffs[Term=='TDF_expY', Term:= 'Prior TDF exposure']
+coeffs[Term=='TDF_duration', Term:= 'Duration on TDF (years)']
+coeffs[Term=='ART_regINSTI_2NRTI', Term:= 'ART reg: INSTI vs. TAF']
+coeffs[Term=='ART_regbPI_2NRTI', Term:= 'ART reg: PI vs. TAF']
+coeffs[Term=='ART_regNNRTI_2NRTI', Term:= 'ART reg: NNRTI vs. TAF']
+coeffs[Term=='fam_hx_bone_diseaseYes', Term:= 'Family history of\nbone disease']
+coeffs[Term=='reduced_mobilityYes', Term:= 'Reduced mobilisation']
+coeffs[Term=='bmi_cat<18.5', Term:= 'BMI: <18.5 vs. 18.5-25']
+coeffs[Term=='bmi_cat25M30', Term:= 'BMI: 25-30 vs. 18.5-25']
+coeffs[Term=='bmi_cat30P', Term:= 'BMI: 30+ vs. 18.5-25']
+coeffs[Term=='smokeYes', Term:= 'Smoker: Current vs. never/ex']
+coeffs[Term=='ever_smokeYes', Term:= 'Smoker: Ever smoked vs. never']
+coeffs[Term=='alcoholYes', Term:= 'Drinks alcohol']
+coeffs[Term=='abnormal_vitD', Term:= 'Vitamin D <= 50 nmol/L']
+coeffs[Term=='high_PTH', Term:= 'PTH >= 7.2 pmol/L']
+
+coeff_order <- c("Age","CDCC","TDF","TDF_duration","ART","FHB","Mobility", "BMI","Smoking","Alcohol","VitaminD","PTH")
+coeffs[, model:= factor(model, levels=rev(coeff_order))]
+coeffs[, Term:= factor(Term, levels=rev(unique(coeffs$Term)))]
+
+ggplot(coeffs, aes(x = Estimate, y = Term, col = model)) +
+  geom_point(size = 4) +
+  geom_errorbarh(aes(xmin = LowerCI, xmax = UpperCI), height = 0.2) +
+  scale_color_manual(values=c(pal,pal2)) +
+  xlab("Estimated coefficient") +
+  ylab("Predictor") +
+  theme_minimal() +
+  #scale_x_log10() +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey30") +
+  theme(legend.position='none') #+
+
+if(args$save_figs==T) ggsave(file=file.path(indir.data,'results',args$analysis,'forest_plot_change_LS_BMD_fu_thrsh_minus2.pdf'),h=6,w=5,bg="white")
+
+coeffs[, L:= paste0(round(Estimate,2),' [',round(LowerCI,2),'-',round(UpperCI,2),']')]
+
+tab <- subset(coeffs,select=c('Term','L'))
+
+setnames(tab,c('Term','L'),c('Predictor','Estimated coefficient [95% CrI]'))
+
+kable(tab, "html", escape = F, align = "rr") %>%
+  kable_styling(full_width = F, position = "center")
+
+pval <- fread(file = file.path(indir.data,'results',args$analysis,'change_BMD_LS_adjust_blmodels_priors_N02_pvalues.csv'))
+pval <- pval[, c('model','Term','pval')]
+pval[, pval:= round(pval,2)]
+setnames(pval,'pval','Posterior probability coefficient < 0')
+
+kable(pval, "html", escape = F, align = "rrr") %>%
+  kable_styling(full_width = F, position = "center")
+
+
+```
+
+# Impact of TAF switching and duration on TAF on accrual of BMD 
+
+We now investigate whether participants who switched to TAF between the baseline and follow-up visit had a significantly different BMD accrual. 
+
+2 participants were excluded in this comparison:
+
+* One remained on TDF
+* One was on TAF at baseline but switched to TDF 1 year after enrolment
+
+
+We first plot the change in Zscores for those that switched to TAF and those participants on non-TDF/TAF regimens. The median change in zscore is close to zero for both groups.
+
+```{r , warning=FALSE, message=FALSE, echo=F, fig.height=3, fig.width=3}
+
+dt <- readRDS(file=file.path(indir.data,'results',args$analysis,'cleaned_data.RDS'))
+dc <- subset(dt,visit=='baseline')
+df <- subset(dt,visit=='follow-up', select=c('study_id','date_scan','BMD','BMD_LS_Z','TAF_duration'))
+dc <- merge(dc,df,by='study_id')
+setnames(dc,c('date_scan.x','date_scan.y','BMD.x','BMD.y','BMD_LS_Z.x','BMD_LS_Z.y','TAF_duration.x','TAF_duration.y'),
+         c('date_scan_bl','date_scan_fu','BMD_bl','BMD_fu','BMD_LS_Z_bl','BMD_LS_Z_fu','TAF_duration_bl','TAF_duration_fu'))
+
+dc[, change_BMD_raw:= BMD_fu - BMD_bl]
+dc[, change_BMD_LS:= BMD_LS_Z_fu - BMD_LS_Z_bl]
+
+# remove participants with no follow-up scan
+dc <- subset(dc,!is.na(BMD_LS_Z_fu))
+
+# add duration on TAF for the ones that are missing
+dc[TAF_fu==1 & is.na(TAF_duration_fu), TAF_duration_fu:= round(as.numeric(date_scan_fu - date_scan_bl)/30.44,0)]
+
+# find those still on TDF to exclude from comparison
+dc[TDF_fu==1 & !is.na(TAF_duration_fu), TDF_fu:= 0]
+
+# fix 1 pt who switched back to TDF
+dc[study_id=='BONDY/1519/044', TDF_fu:= 1]
+dc[study_id=='BONDY/1519/044', TAF_fu:= 0]
+
+dc[study_id=='BONDY/2024/055', TDF_fu:= 0]
+
+dc[, TAF_fu_fct:= factor(TAF_fu,levels=c(0,1),labels=c('Non-TAF/TDF','TAF'))]
+
+# remove participants still on TDF
+dc <- subset(dc,TDF_fu==0)
+
+#dc[, TAF_switch:= factor(TAF_fu_fct,levels=c(0,1),labels=c('Non-TDF/TAF','TAF'))]
+
+ggplot(subset(dc,TDF_fu==0),aes(x=TAF_fu_fct, y=change_BMD_LS,color=TAF_fu_fct)) +
+  geom_point(aes()) +
+  geom_boxplot(fill=NA) +
+  #geom_violin() +
+  labs(x='TAF-ART at follow up',y='Change in LS-BMD z-score') +
+  scale_color_npg() +
+  #scale_fill_npg() +
+  theme_bw() +
+  theme(legend.position="none")
+
+if(args$save_figs==T) ggsave(file=file.path(indir.data,'results',args$analysis,'plot_change_LS_BMD_TAF_nonTDFTAF.pdf'),h=4,w=4,bg="white")
+
+tmp <- dc[TDF_fu==0, list(TAF_fu_fct='overall',
+                 mean=mean(change_BMD_LS),
+                 sd=sd(change_BMD_LS))]
+tmp2 <- dc[TDF_fu==0, list(mean=mean(change_BMD_LS),
+                 sd=sd(change_BMD_LS)),by='TAF_fu_fct']
+tmp <- rbind(tmp,tmp2)
+
+tmp[, `mean change in zscore (sd)`:= paste0(round(mean,2),' (',round(sd,2),')')]
+tmp <- tmp[, c('TAF_fu_fct','mean change in zscore (sd)')]
+
+kable(tmp, "html", escape = F, align = "rr") %>%
+  kable_styling(full_width = F, position = "center")
+
+```
+
+We consider that the accrual of BMD for participants may also depend on the time on TAF, for those participants who switched. We expect that the accrual of BMD may be associated with the length of time on TAF, but plotting the data below suggests the association may be non-linear. 
+<!-- The empirical data suggests longer duration on TAF increases the benefit with respect to BMD accrual, though this effect wanes after 3 years. -->
+
+<!-- Those who switched did have a median positive increase in BMD LS Zscore at follow-up, with an average increase greater than those who switched. However we don't find the difference to be significant. -->
+
+```{r , warning=FALSE, message=FALSE, echo=F, fig.height=3, fig.width=3}
+
+# re-order by x variable
+tmp <- dc[order(TAF_duration_fu),]
+
+ggplot(subset(dc,TAF_fu==1),aes(x=TAF_duration_fu,y=change_BMD_LS)) + geom_point() + 
+  #geom_smooth() +
+  labs(x='Duration on TAF',y='Change in LS BMD zscore over follow-up') +
+  theme_bw()
+
+```
+
+The full model is described by,
+
+<!-- \boldsymbol{f}(x_{t}) = (\boldsymbol{f}_{non-TAF}^T,\boldsymbol{f}_{TAF}^T)^T\\ -->
+<!-- \boldsymbol{f}_{non-TAF}^T \sim HSGP(0,k(x_t,x_t')\\ -->
+<!-- \ell^2 \sim \text{Inv-Gamma}(5,5), -->
+$$
+\boldsymbol{Y} = \alpha + \beta_{\text{BL}}\boldsymbol{x}_{\text{BL}} + (\beta_{\text{TAF}} + \boldsymbol{f}(x_{t}))\boldsymbol{x}_{\text{TAF}}\\
+\boldsymbol{f}(\boldsymbol{x}_{t}) \sim HSGP(0,k(x_t,x_t'))\\
+k(x_t,x_t') = \sigma^2 \text{exp}\bigg(\frac{(x_t - x_t')^2}{2\ell^2}\bigg)\\
+\alpha \sim \text{N}(0,5^2)\\
+\beta_{\text{BL}} \sim \text{N}(0,1^2)\\
+\beta_{\text{TAF}} \sim \text{N}(0,1^2)\\
+\sigma \sim \text{N}(0,0.5^2)\\
+\ell \sim \text{N}(0,0.2^2),
+$$
+where $\boldsymbol{x}_{BL}$ is the baseline BMD lumbar spine zscore $\boldsymbol{x}_{TAF}$ is an indicator for participants on TAF at follow-up, $x_t$ is the duration spent on TAF, $k(x_t,x_t')$ is the kernel function, for which we assume a squared exponential. $\sigma$ and $\ell$ are the hyper-parameters of the kernel function, which determine the amplitude and wigglyness of the random function. We approximate the GP with $M=30$ basis functions and a factor of $c=1.5$ to compute the boundary value.
+
+## Model fit diagnostics {.tabset}
+
+We fit the model, here are the diagnostics,
+
+### ESS/Rhat 
+
+```{r , warning=FALSE, message=FALSE, echo=F, fig.height=3, fig.width=3}
+
+fit <- readRDS(file = file.path(indir.data,'results',args$analysis,'adjust_bl_zscore','HSGP_stanfit.RDS'))
+
+fit.target.pars <- c('beta0','beta_TAF','beta_bl','sigma','lscale','alpha','beta_f[1]')
+
+po <- fit$draws(inc_warmup = FALSE,
+                format = 'draws_df',
+                variables = fit.target.pars
+)
+su <- as.data.table(posterior::summarise_draws(po))
+su[,min(ess_bulk)]
+su[,max(rhat)]
+
+```
+
+### Traceplots
+
+```{r , warning=FALSE, message=FALSE, echo=F, fig.height=8, fig.width=5}
+
+po <- fit$draws(inc_warmup = TRUE,
+                variables = fit.target.pars
+)
+tmp <- su$variable[which.min(su$ess_bulk)]
+tmp <- unique(fit.target.pars,tmp)
+fit.target.pars <- c('beta0','beta_TAF','sigma','lscale','alpha','beta_f[1]')
+
+bayesplot:::color_scheme_set("mix-blue-pink")
+bayesplot:::mcmc_trace(po,
+                            pars = fit.target.pars,
+                            n_warmup = 5e2,
+                            facet_args = list(ncol = 1, labeller = label_parsed)
+)
+
+```
+
+### Pairs plots
+
+```{r , warning=FALSE, message=FALSE, echo=F, fig.height=8, fig.width=8}
+
+pd <- fit$draws(inc_warmup = FALSE,
+                variables = c(fit.target.pars))
+bayesplot:::color_scheme_set("mix-blue-pink")
+bayesplot:::mcmc_pairs(pd,
+                            pars = c(fit.target.pars),
+                            diag_fun = "dens",
+                            off_diag_fun = "hex"
+)
+
+
+```
+
+## {-} 
+
+Examining the posterior regression coefficients and credible intervals indicates
+
+* Participants who switched to TAF have similar BMD accrual to participants on non-TAF/TDF regimens (non-significant impact of TAF vs. non-TAF/TDF) relative to matched controls
+* Baseline BMD is not associated with accrual of BMD relative to matched controls
+
+```{r , warning=FALSE, message=FALSE, echo=F, fig.height=3, fig.width=3}
+
+po <- fit$draws(inc_warmup = FALSE,
+                format = 'draws_df',
+                variables = c('beta_TAF','beta_bl')
+)
+po <- as.data.table(po)
+setnames(po, colnames(po), gsub('^\\.','',colnames(po)))
+#po <- melt(po, id.vars = c('chain','iteration','draw'))
+post_pr <- po[, list(pr_inferior = (length(beta_TAF[beta_TAF<0])/.N))]
+
+po <- po[,
+         list( beta_TAF = quantile(beta_TAF, probs = c(0.5, 0.025, 0.975) ),
+               beta_bl = quantile(beta_bl, probs = c(0.5, 0.025, 0.975) ),
+               stat = c('M','CL', 'CU')
+         )]
+po <- melt(po, id.vars=c('stat'))
+coeffs <- dcast.data.table(po, variable~stat, value.var = c('value'))
+coeffs[, Term:= factor(variable,levels=c('beta_TAF','beta_bl'),
+                           labels=c('TAF vs. non-TDF/TAF','Baseline BMD Zscore'))]
+
+ggplot(coeffs, aes(x = M, y = Term),color=pal[1]) +
+  geom_point(size = 4) +
+  geom_errorbarh(aes(xmin = CL, xmax = CU), height = 0.2) +
+  scale_color_manual(values=c(pal,pal2)) +
+  xlab("Estimated coefficient") +
+  ylab("Predictor") +
+  theme_minimal() +
+  #scale_x_log10() +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey30") +
+  theme(legend.position='none') #+
+
+post_pr[, variable:= 'beta_TAF']
+kable(post_pr[,c('variable','pr_inferior')], "html", escape = F, align = "r") %>%
+  kable_styling(full_width = T, position = "center")
+
+
+```
+
+We can also plot the non-parametric random function for accrual of BMD vs. duration on TAF over the data (for participants who switched to TAF). There doesn't look to be a clear trend, with the posterior median of the random function close to 0 regardless of duration on TAF. However, most participants who switched had a similar duration on TAF (~24 months), since follow-up was planned for 2 years after the baseline visit, so it may be difficult to detect temporal effects from these data. Therefore, we can only say that from these data we do not find evidence of BMD accrual for participants who switched to TAF being associated with duration on TAF.
+
+```{r , warning=FALSE, message=FALSE, echo=F, fig.height=3, fig.width=3}
+
+# plot function
+
+model_fit <- rstan::read_stan_csv(fit$output_files())
+f <- summary(model_fit, pars = c("f_TAF"), probs = c(0.025, 0.5, 0.975), digits_summary = 4)$summary
+
+tmp <- dc[order(TAF_duration_fu),]
+tmp[, row_id:= seq(1,nrow(tmp))]
+
+M <- max(tmp$TAF_duration_fu,na.rm=T)
+grid = data.table(months = seq.int(0,M,1))
+grid[, x_index := 1:nrow(grid)]
+
+# rescale inputs
+x <- scale(grid$months, center=TRUE, scale=TRUE)
+y <- scale(tmp$change_BMD_LS[], center=TRUE, scale=TRUE)
+
+#Standard deviation and mean of the output
+std_y <- attr(y,"scaled:scale")
+m_y <- attr(y,"scaled:center")
+
+ind <- tmp$row_id
+
+ggplot() + geom_point(data=subset(tmp,TAF_fu==1),aes(x=TAF_duration_fu,y=change_BMD_LS)) +
+  geom_ribbon(aes(x=grid$months,ymin=f[,4]*std_y+m_y,ymax=f[,6]*std_y+m_y),fill='red',alpha=0.3) +
+  geom_line(aes(x=grid$months,y=f[,1]*std_y+m_y),col='red') + theme_bw() +
+  labs(x='Duration on TAF (months)',y='Change in BMD zscore')
+
+
+```
